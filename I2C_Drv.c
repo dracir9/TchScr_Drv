@@ -209,6 +209,26 @@ static const i2c_hw_cmd_t stop_cmd = {
 
 static i2c_obj_t *p_i2c_obj[I2C_NUM_MAX] = {0};
 
+static i2c_intr_event_t eventTrace[1024];
+static uint16_t eventPtr = 0;
+static uint16_t readEventPtr = 0;
+static bool enableLog = false;
+
+void i2cTch_set(bool state)
+{
+    enableLog = state;
+}
+
+bool i2cTch_getEvent(int* event)
+{
+    if (readEventPtr < eventPtr)
+    {
+        *event = eventTrace[readEventPtr++];
+        return true;
+    }
+    return false;
+}
+
 /**
  * @brief Functions
  * 
@@ -685,7 +705,6 @@ static void IRAM_ATTR i2cTch_isr_handler(void *arg)
             p_i2c_obj[i2c_num]->status = I2C_STATUS_ARB_LOST;
             evt = I2C_CMD_EVT_DONE;
         } else if (evt_type == I2C_INTR_EVENT_END_DET) {
-            ESP_LOGE(I2C_TAG, "Invalid event");
             assert(false);
         } else if (evt_type == I2C_INTR_EVENT_TRANS_DONE) {
             if (p_i2c->status != I2C_STATUS_ACK_ERROR && p_i2c->status != I2C_STATUS_IDLE) {
@@ -697,7 +716,7 @@ static void IRAM_ATTR i2cTch_isr_handler(void *arg)
     } else {
         i2cTch_slave_handle_event(i2c_context[i2c_num].dev, &evt_type);
         if (evt_type == I2C_INTR_EVENT_TRANS_DONE || evt_type == I2C_INTR_EVENT_RXFIFO_FULL) {
-            uint32_t rx_fifo_cnt = i2c_context[i2c_num].dev->status_reg.rx_fifo_cnt;;
+            uint32_t rx_fifo_cnt = i2c_context[i2c_num].dev->status_reg.rx_fifo_cnt;
             
             i2cTch_read_rxfifo(i2c_context[i2c_num].dev, p_i2c->data_buf, rx_fifo_cnt);
 
@@ -707,13 +726,14 @@ static void IRAM_ATTR i2cTch_isr_handler(void *arg)
             i2c_context[i2c_num].dev->int_clr.val = I2C_LL_SLAVE_RX_INT;
         } else if (evt_type == I2C_INTR_EVENT_TXFIFO_EMPTY) {   // Slave sending NOT USED!
             // Ensure we never reach here
-            ESP_LOGE(I2C_TAG, "Invalid State");
 
             // Disable and clear interrupt flags
             i2c_context[i2c_num].dev->int_ena.val &= (~I2C_LL_SLAVE_TX_INT);
             i2c_context[i2c_num].dev->int_clr.val = I2C_LL_SLAVE_TX_INT;
         }
     }
+    if (eventPtr < 1024 && evt_type != I2C_INTR_EVENT_TRANS_DONE)
+        eventTrace[eventPtr++] = evt_type;
     // Check here if there is a high-priority task needs to be switched.
     if (HPTaskAwoken == pdTRUE) {
         portYIELD_FROM_ISR();
@@ -861,6 +881,10 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
     I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
     i2cTch_enable_slave_rx_it(i2c_context[i2c_num].dev);
     I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
+    if (enableLog)
+    {
+        printf(".\n");
+    }
     while (size_rem && ticks_rem <= ticks_to_wait) {
         uint8_t *pdata = (uint8_t *) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &size, ticks_to_wait, size_rem);
         if (pdata && size > 0) {
@@ -1118,6 +1142,13 @@ esp_err_t i2cTch_set_mode(i2c_port_t i2c_num, i2c_mode_t mode)
     I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
 
     if (p_i2c_obj[i2c_num]->mode == mode) return ESP_OK;
+
+    // Flush buffer
+    if (mode == I2C_MODE_MASTER)
+    {
+        uint8_t dat;
+        while (i2cTch_slave_read_data(i2c_num, &dat, 1, 0));
+    }
 
     I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
     p_i2c_obj[i2c_num]->mode = mode;

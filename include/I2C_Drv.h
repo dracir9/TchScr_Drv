@@ -62,6 +62,9 @@ esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
 i2c_mode_t i2cTch_get_mode(i2c_port_t i2c_num);
 esp_err_t i2cTch_set_mode(i2c_port_t i2c_num, i2c_mode_t mode);
 
+bool i2cTch_getEvent(int* event);
+void i2cTch_set(bool state);
+
 #ifdef __cplusplus
 }
 #endif
