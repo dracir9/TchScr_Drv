@@ -43,8 +43,10 @@ struct TchCalib
 
 enum TrgSrc : uint8_t
 {
-    PRESS = 1,
-    HOLD,
+    IDLE,
+    PRESS,
+    HOLD_STRT,
+    HOLD_END,
     RELEASE
 };
 
@@ -64,7 +66,7 @@ struct Button
 struct TchEvent
 {
     uint8_t id:5;
-    uint8_t event:3;
+    TrgSrc event:3;
 };
 
 class TchScr_Drv
