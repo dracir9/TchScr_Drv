@@ -918,21 +918,6 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
         return ESP_ERR_TIMEOUT;
     }
 
-    xQueueReset(p_i2c->cmd_evt_queue);
-    if (p_i2c->status == I2C_STATUS_TIMEOUT
-            || i2cTch_is_bus_busy(i2c_context[i2c_num].dev)) {
-        i2cTch_hw_fsm_reset(i2c_num);  // Reset port if error detected
-    }
-    //i2c_reset_tx_fifo(i2c_num);
-    //i2c_reset_rx_fifo(i2c_num);
-    p_i2c->status = I2C_STATUS_IDLE;
-    i2c_reset_tx_fifo(i2c_num);
-    i2c_reset_rx_fifo(i2c_num);
-    // These two interrupts some times can not be cleared when the FSM gets stuck.
-    // so we disable them when these two interrupt occurs and re-enable them here.
-    i2cTch_disable_intr_mask(i2c_context[i2c_num].dev, I2C_LL_INTR_MASK);
-    i2cTch_clr_intsts_mask(i2c_context[i2c_num].dev, I2C_LL_INTR_MASK);
-
     i2c_hw_cmd_t data_cmd = {
         .ack_en = 1,
         .ack_exp = 0,
@@ -940,64 +925,82 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
         .byte_num = len + 1,
         .op_code = I2C_CMD_WRITE,
     };
-
-    p_i2c->status = I2C_STATUS_WRITE;
-    // Write commands
-    I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
-    
-    i2cTch_write_txfifo(i2c_context[i2c_num].dev, &address, 1);
-    i2cTch_write_txfifo(i2c_context[i2c_num].dev, data, len);
-    i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, start_cmd, 0);
-    i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, data_cmd, 1);
-    i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, stop_cmd, 2);
-    i2cTch_master_enable_tx_it(i2c_context[i2c_num].dev);
-    i2cTch_trans_start(i2c_context[i2c_num].dev);
-
-    I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
-
-    // Wait event bits
-    i2c_cmd_evt_t evt;
-    while (1) {
-        TickType_t wait_time = xTaskGetTickCount();
-        if (wait_time - ticks_start > ticks_to_wait) { // out of time
-            wait_time = I2C_CMD_ALIVE_INTERVAL_TICK;
-        } else {
-            wait_time = ticks_to_wait - (wait_time - ticks_start);
-            if (wait_time < I2C_CMD_ALIVE_INTERVAL_TICK) {
-                wait_time = I2C_CMD_ALIVE_INTERVAL_TICK;
-            }
+    uint8_t ackRetry = 0;
+    do
+    {
+        xQueueReset(p_i2c->cmd_evt_queue);
+        if (p_i2c->status == I2C_STATUS_TIMEOUT
+                || i2cTch_is_bus_busy(i2c_context[i2c_num].dev)) {
+            i2cTch_hw_fsm_reset(i2c_num);  // Reset port if error detected
         }
-        // In master mode, since we don't have an interrupt to detect bus error or FSM state, what we do here is to make
-        // sure the interrupt mechanism for master mode is still working.
-        // If the command sending is not finished and there is no interrupt any more, the bus is probably dead caused by external noise.
-        portBASE_TYPE evt_res = xQueueReceive(p_i2c->cmd_evt_queue, &evt, wait_time);
-        if (evt_res == pdTRUE) {
-            if (evt == I2C_CMD_EVT_DONE) {
-                if (p_i2c->status == I2C_STATUS_TIMEOUT) {
-                    // If the I2C slave are powered off or the SDA/SCL are connected to ground, for example,
-                    // I2C hw FSM would get stuck in wrong state, we have to reset the I2C module in this case.
-                    i2cTch_hw_fsm_reset(i2c_num);
-                    ret = ESP_ERR_TIMEOUT;
-                } else if (p_i2c->status == I2C_STATUS_ACK_ERROR) {
-                    ret = ESP_ERR_INVALID_RESPONSE;
-                } else if (p_i2c->status == I2C_STATUS_ARB_LOST) {
-                    ret = ESP_FAIL;
-                } else {
-                    ret = ESP_OK;
+
+        p_i2c->status = I2C_STATUS_IDLE;
+        i2c_reset_tx_fifo(i2c_num);
+        i2c_reset_rx_fifo(i2c_num);
+        // These two interrupts some times can not be cleared when the FSM gets stuck.
+        // so we disable them when these two interrupt occurs and re-enable them here.
+        i2cTch_disable_intr_mask(i2c_context[i2c_num].dev, I2C_LL_INTR_MASK);
+        i2cTch_clr_intsts_mask(i2c_context[i2c_num].dev, I2C_LL_INTR_MASK);
+
+        p_i2c->status = I2C_STATUS_WRITE;
+        // Write commands
+        I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
+        
+        i2cTch_write_txfifo(i2c_context[i2c_num].dev, &address, 1);
+        i2cTch_write_txfifo(i2c_context[i2c_num].dev, data, len);
+        i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, start_cmd, 0);
+        i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, data_cmd, 1);
+        i2cTch_write_cmd_reg(i2c_context[i2c_num].dev, stop_cmd, 2);
+        i2cTch_master_enable_tx_it(i2c_context[i2c_num].dev);
+        i2cTch_trans_start(i2c_context[i2c_num].dev);
+
+        I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
+
+        // Wait event bits
+        i2c_cmd_evt_t evt;
+        while (1) {
+            TickType_t wait_time = xTaskGetTickCount();
+            if (wait_time - ticks_start > ticks_to_wait) { // out of time
+                wait_time = I2C_CMD_ALIVE_INTERVAL_TICK;
+            } else {
+                wait_time = ticks_to_wait - (wait_time - ticks_start);
+                if (wait_time < I2C_CMD_ALIVE_INTERVAL_TICK) {
+                    wait_time = I2C_CMD_ALIVE_INTERVAL_TICK;
                 }
+            }
+            // In master mode, since we don't have an interrupt to detect bus error or FSM state, what we do here is to make
+            // sure the interrupt mechanism for master mode is still working.
+            // If the command sending is not finished and there is no interrupt any more, the bus is probably dead caused by external noise.
+            portBASE_TYPE evt_res = xQueueReceive(p_i2c->cmd_evt_queue, &evt, wait_time);
+            if (evt_res == pdTRUE) {
+                if (evt == I2C_CMD_EVT_DONE) {
+                    if (p_i2c->status == I2C_STATUS_TIMEOUT) {
+                        // If the I2C slave are powered off or the SDA/SCL are connected to ground, for example,
+                        // I2C hw FSM would get stuck in wrong state, we have to reset the I2C module in this case.
+                        i2cTch_hw_fsm_reset(i2c_num);
+                        ret = ESP_ERR_TIMEOUT;
+                    } else if (p_i2c->status == I2C_STATUS_ACK_ERROR) {
+                        ret = ESP_ERR_INVALID_RESPONSE;
+                        ackRetry++;
+                    } else if (p_i2c->status == I2C_STATUS_ARB_LOST) {
+                        ret = ESP_FAIL;
+                    } else {
+                        ret = ESP_OK;
+                    }
+                    break;
+                }
+                if (evt == I2C_CMD_EVT_ALIVE) {
+                }
+            } else {
+                ret = ESP_ERR_TIMEOUT;
+                // If the I2C slave are powered off or the SDA/SCL are connected to ground, for example,
+                // I2C hw FSM would get stuck in wrong state, we have to reset the I2C module in this case.
+                i2cTch_hw_fsm_reset(i2c_num);
+                
                 break;
             }
-            if (evt == I2C_CMD_EVT_ALIVE) {
-            }
-        } else {
-            ret = ESP_ERR_TIMEOUT;
-            // If the I2C slave are powered off or the SDA/SCL are connected to ground, for example,
-            // I2C hw FSM would get stuck in wrong state, we have to reset the I2C module in this case.
-            i2cTch_hw_fsm_reset(i2c_num);
-            
-            break;
         }
-    }
+    } while (p_i2c->status == I2C_STATUS_ACK_ERROR && ackRetry < 20);
     p_i2c->status = I2C_STATUS_DONE;
     xSemaphoreGive(p_i2c->cmd_mux);
     return ret;
