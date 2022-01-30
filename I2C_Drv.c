@@ -212,12 +212,6 @@ static i2c_obj_t *p_i2c_obj[I2C_NUM_MAX] = {0};
 static i2c_intr_event_t eventTrace[1024];
 static uint16_t eventPtr = 0;
 static uint16_t readEventPtr = 0;
-static bool enableLog = false;
-
-void i2cTch_set(bool state)
-{
-    enableLog = state;
-}
 
 bool i2cTch_getEvent(int* event)
 {
@@ -881,10 +875,7 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
     I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
     i2cTch_enable_slave_rx_it(i2c_context[i2c_num].dev);
     I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
-    if (enableLog)
-    {
-        printf(".\n");
-    }
+
     while (size_rem && ticks_rem <= ticks_to_wait) {
         uint8_t *pdata = (uint8_t *) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &size, ticks_to_wait, size_rem);
         if (pdata && size > 0) {
