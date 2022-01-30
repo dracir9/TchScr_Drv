@@ -140,7 +140,7 @@ esp_err_t TchScr_Drv::setCalibration(TchCalib* calib, TickType_t timeout)
     return i2cTch_master_send_data(i2c_num, (uint8_t*)calib, sizeof(TchCalib), 0x80, timeout);
 }
 
-esp_err_t TchScr_Drv::setThresholds(int16_t minPres, int16_t maxPres, TickType_t timeout)
+esp_err_t TchScr_Drv::setThresholds(uint16_t minPres, uint16_t maxPres, uint16_t freq, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
@@ -148,9 +148,15 @@ esp_err_t TchScr_Drv::setThresholds(int16_t minPres, int16_t maxPres, TickType_t
     if (err != ESP_OK) {
         return err;
     }
-    int16_t data[2] = {minPres, maxPres};
+    float reloadVal = roundf(65536.0f - 24.5e6f/(12.0f * freq));
+    if (reloadVal < 0.0f)
+        freq = 0;
+    else
+        freq = reloadVal;
 
-    return i2cTch_master_send_data(i2c_num, (uint8_t*)data, 4, 0x90, timeout);
+    uint16_t data[3] = {minPres, maxPres, freq};
+
+    return i2cTch_master_send_data(i2c_num, (uint8_t*)data, 6, 0x90, timeout);
 }
 
 esp_err_t TchScr_Drv::setButton(Button* btn, TickType_t timeout)
