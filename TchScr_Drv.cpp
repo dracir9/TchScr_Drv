@@ -140,7 +140,7 @@ esp_err_t TchScr_Drv::setCalibration(TchCalib* calib, TickType_t timeout)
     return i2cTch_master_send_data(i2c_num, (uint8_t*)calib, sizeof(TchCalib), 0x80, timeout);
 }
 
-esp_err_t TchScr_Drv::setThresholds(uint16_t minPres, uint16_t maxPres, uint16_t freq, TickType_t timeout)
+esp_err_t TchScr_Drv::setThresholds(uint16_t minPres, uint16_t maxPres, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
@@ -148,32 +148,39 @@ esp_err_t TchScr_Drv::setThresholds(uint16_t minPres, uint16_t maxPres, uint16_t
     if (err != ESP_OK) {
         return err;
     }
-    float reloadVal = roundf(65536.0f - 24.5e6f/(12.0f * freq));
-    if (reloadVal < 0.0f)
-        freq = 0;
-    else
-        freq = reloadVal;
 
-    uint16_t data[3] = {minPres, maxPres, freq};
+    uint16_t data[2] = {minPres, maxPres};
 
-    return i2cTch_master_send_data(i2c_num, (uint8_t*)data, 6, 0x90, timeout);
+    return i2cTch_master_send_data(i2c_num, (uint8_t*)data, 4, 0x90, timeout);
 }
 
 esp_err_t TchScr_Drv::setButton(Button* btn, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    if (err != ESP_OK) {
+        return err;
+    }
 
     return i2cTch_master_send_data(i2c_num, (uint8_t*)btn, sizeof(Button), 0xA0, timeout);
 }
 
-esp_err_t TchScr_Drv::setNotifications(bool touch, bool button, bool flipXY, TickType_t timeout)
+esp_err_t TchScr_Drv::setNotifications(bool touch, bool button, bool flipXY, uint16_t freq, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    uint8_t data = touch | (button << 1) | (flipXY << 2);
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    if (err != ESP_OK) {
+        return err;
+    }
 
-    return i2cTch_master_send_data(i2c_num, &data, 2, 0xB0, timeout);
+    float reloadVal = roundf(65536.0f - 24.5e6f/(12.0f * freq));
+    if (reloadVal < 0.0f)
+        freq = 0;
+    else
+        freq = reloadVal;
+    uint8_t data[3] = {(uint8_t)(touch | (button << 1) | (flipXY << 2)), ((uint8_t*)&freq)[0], ((uint8_t*)&freq)[1]};
+
+    return i2cTch_master_send_data(i2c_num, data, 3, 0xB0, timeout);
 }
