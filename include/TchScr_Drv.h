@@ -82,7 +82,7 @@ public:
     esp_err_t getLastPoint(Vec2h* point, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t getLastButton(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
     uint32_t getEvent(TchEvent* evnt, Vec2h* point, TickType_t timeout = pdMS_TO_TICKS(1000));
-    esp_err_t setCalibration(TchCalib* calib, TickType_t timeout = pdMS_TO_TICKS(1000));
+    esp_err_t setCalibration(const TchCalib* calib, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setThresholds(uint16_t minPres, uint16_t maxPres, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setButton(Button* btn, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setNotifications(bool touch, bool button, bool flipXY, uint16_t freq = 260, TickType_t timeout = pdMS_TO_TICKS(1000));

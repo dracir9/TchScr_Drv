@@ -128,7 +128,7 @@ uint32_t TchScr_Drv::getEvent(TchEvent* evnt, Vec2h* point, TickType_t timeout)
     return 0;   // Timeout
 }
 
-esp_err_t TchScr_Drv::setCalibration(TchCalib* calib, TickType_t timeout)
+esp_err_t TchScr_Drv::setCalibration(const TchCalib* calib, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
