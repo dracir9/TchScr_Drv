@@ -63,7 +63,7 @@ esp_err_t TchScr_Drv::begin(i2c_mode_t mode, gpio_num_t sda, gpio_num_t scl, uin
     return ESP_OK;
 }
 
-esp_err_t TchScr_Drv::getLastPoint(Vec2h* point, TickType_t timeout)
+esp_err_t TchScr_Drv::getLastEvent(TchEvent* evnt, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
@@ -71,23 +71,13 @@ esp_err_t TchScr_Drv::getLastPoint(Vec2h* point, TickType_t timeout)
     if (err != ESP_OK) {
         return err;
     }
-    return i2cTch_master_read_data(i2c_num, (uint8_t*)point, 4, 0x81, timeout);
+
+    return i2cTch_master_read_data(i2c_num, (uint8_t*)evnt, 5, 0x81, timeout);
 }
 
-esp_err_t TchScr_Drv::getLastButton(TchEvent* evnt, TickType_t timeout)
+uint32_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
 {
-    if (!hw_init) return ESP_FAIL;
-
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
-    return i2cTch_master_read_data(i2c_num, (uint8_t*)evnt, 1, 0x91, timeout);
-}
-
-uint32_t TchScr_Drv::getEvent(TchEvent* evnt, Vec2h* point, TickType_t timeout)
-{
-    static uint8_t _buff[4];
+    static uint8_t _buff[5];
     if (!hw_init) return ESP_FAIL;
 
     esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE);
@@ -95,37 +85,13 @@ uint32_t TchScr_Drv::getEvent(TchEvent* evnt, Vec2h* point, TickType_t timeout)
         return 0;
     }
 
-    portTickType ticks_rem = timeout;
-    portTickType ticks_end = xTaskGetTickCount() + timeout;
-    while (ticks_rem <= timeout) {
-        uint8_t len = 0;
-        i2cTch_slave_read_data(i2c_num, &len, 1, ticks_rem);
-        if (len == 1 && evnt != NULL)
-        {
-            i2cTch_slave_read_data(i2c_num, (uint8_t*)evnt, 1, ticks_rem);
-            return len;
-        }
-        else if (len == 4 && point != NULL)
-        {
-            i2cTch_slave_read_data(i2c_num, (uint8_t*)point, 4, ticks_rem);
-            return len;
-        }
-        else if (len == 1 || len == 4)
-        {
-            i2cTch_slave_read_data(i2c_num, _buff, len, ticks_rem);
-        }
-        else
-        {
-            ESP_LOGD("TchScr", "Read Error");
-            return 0;   // Read error
-        }
+    uint32_t len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
 
-        if (timeout != portMAX_DELAY) {
-            ticks_rem = ticks_end - xTaskGetTickCount();
-        }
-    }
-    
-    return 0;   // Timeout
+    evnt->id = _buff[0] & 0x1F;
+    evnt->event = (TrgSrc)(_buff[0] >> 5);
+    evnt->point.x = ((int16_t*)&_buff[1])[0];
+    evnt->point.y = ((int16_t*)&_buff[1])[1];
+    return len;
 }
 
 esp_err_t TchScr_Drv::setCalibration(TchCalib* calib, TickType_t timeout)

@@ -67,6 +67,7 @@ struct TchEvent
 {
     uint8_t id:5;
     TrgSrc event:3;
+    Vec2h point;
 };
 
 class TchScr_Drv
@@ -79,9 +80,8 @@ public:
     ~TchScr_Drv();
 
     esp_err_t begin(i2c_mode_t mode, gpio_num_t sda, gpio_num_t scl, uint16_t addr, uint32_t freq = 255000);
-    esp_err_t getLastPoint(Vec2h* point, TickType_t timeout = pdMS_TO_TICKS(1000));
-    esp_err_t getLastButton(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
-    uint32_t getEvent(TchEvent* evnt, Vec2h* point, TickType_t timeout = pdMS_TO_TICKS(1000));
+    esp_err_t getLastEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
+    uint32_t getEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setCalibration(TchCalib* calib, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setThresholds(uint16_t minPres, uint16_t maxPres, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setButton(Button* btn, TickType_t timeout = pdMS_TO_TICKS(1000));
