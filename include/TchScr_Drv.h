@@ -66,8 +66,8 @@ struct Button
 struct TchEvent
 {
     uint8_t id:5;
-    TrgSrc event:3;
-    Vec2h point;
+    TrgSrc trigger:3;
+    Vec2h pos;
 };
 
 class TchScr_Drv

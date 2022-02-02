@@ -88,9 +88,9 @@ uint32_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
     uint32_t len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
 
     evnt->id = _buff[0] & 0x1F;
-    evnt->event = (TrgSrc)(_buff[0] >> 5);
-    evnt->point.x = ((int16_t*)&_buff[1])[0];
-    evnt->point.y = ((int16_t*)&_buff[1])[1];
+    evnt->trigger = (TrgSrc)(_buff[0] >> 5);
+    evnt->pos.x = ((int16_t*)&_buff[1])[0];
+    evnt->pos.y = ((int16_t*)&_buff[1])[1];
     return len;
 }
 
