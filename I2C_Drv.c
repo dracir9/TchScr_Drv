@@ -170,6 +170,7 @@ typedef struct {
 
     size_t rx_buf_length;            /*!< rx buffer length */
     RingbufHandle_t rx_ring_buf;     /*!< rx ringbuffer handler of slave mode */
+    bool unlockSlave;
 } i2c_obj_t;
 
 /**
@@ -846,6 +847,38 @@ esp_err_t i2cTch_delete_driver(i2c_port_t i2c_num)
     return ESP_OK;
 }
 
+static BaseType_t i2cTch_SemaphoreTake(i2c_port_t i2c_num, TickType_t ticks_to_wait)
+{
+    BaseType_t ret = pdTRUE;
+    i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
+    if (xSemaphoreTake(p_i2c->i2c_mux, 0) == pdFALSE)
+    {
+        p_i2c->unlockSlave = true;
+        uint8_t data;
+        xRingbufferSend(p_i2c->rx_ring_buf, &data, 1, ticks_to_wait);
+        ret = xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait);
+        p_i2c->unlockSlave = false;
+    }
+    return ret;
+}
+
+i2c_mode_t i2cTch_get_mode(i2c_port_t i2c_num)
+{
+    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
+    return p_i2c_obj[i2c_num]->mode;
+}
+
+static esp_err_t i2cTch_set_mode(i2c_port_t i2c_num, i2c_mode_t mode, TickType_t ticks_to_wait)
+{
+    if (p_i2c_obj[i2c_num]->mode == mode) return ESP_OK;
+
+    I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
+    p_i2c_obj[i2c_num]->mode = mode;
+    i2c_context[i2c_num].dev->ctr.ms_mode = (mode == I2C_MODE_MASTER) ? 1 : 0;
+    I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
+    return ESP_OK;
+}
+
 int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, TickType_t ticks_to_wait)
 {
     I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_FAIL);
@@ -856,14 +889,15 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
     size_t size_rem = max_size;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
 
+    if (p_i2c->unlockSlave) return -1;
     if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
-        return 0;
+        return -1;
     }
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE);
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE, ticks_to_wait);
     if (err != ESP_OK) {
         xSemaphoreGive(p_i2c->i2c_mux);
-        return 0;
+        return -1;
     }
 
     portTickType ticks_rem = ticks_to_wait;
@@ -873,8 +907,19 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
     I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
 
     while (size_rem && ticks_rem <= ticks_to_wait) {
-        uint8_t *pdata = (uint8_t *) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &size, ticks_to_wait, size_rem);
+        uint8_t *pdata = (uint8_t *) xRingbufferReceiveUpTo(p_i2c->rx_ring_buf, &size, ticks_rem, size_rem);
         if (pdata && size > 0) {
+            if (p_i2c->unlockSlave)
+            {
+                vRingbufferReturnItem(p_i2c->rx_ring_buf, pdata);
+
+                while ((pdata = (uint8_t*) xRingbufferReceive(p_i2c->rx_ring_buf, &size, 0))) // Flush buffer
+                    vRingbufferReturnItem(p_i2c->rx_ring_buf, pdata);
+
+                xSemaphoreGive(p_i2c->i2c_mux);
+                return 0;
+            }
+            
             memcpy(data, pdata, size);
             vRingbufferReturnItem(p_i2c->rx_ring_buf, pdata);
             data += size;
@@ -900,11 +945,11 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
 
-    if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
-        return ESP_ERR_TIMEOUT;
-    }
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    if (i2cTch_SemaphoreTake(i2c_num, ticks_to_wait) == pdFALSE)
+        return ESP_ERR_TIMEOUT;
+
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER, ticks_to_wait);
     if (err != ESP_OK) {
         xSemaphoreGive(p_i2c->i2c_mux);
         return err;
@@ -1009,11 +1054,10 @@ esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
 
-    if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
+    if (i2cTch_SemaphoreTake(i2c_num, ticks_to_wait) == pdFALSE)
         return ESP_ERR_TIMEOUT;
-    }
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER, ticks_to_wait);
     if (err != ESP_OK) {
         xSemaphoreGive(p_i2c->i2c_mux);
         return err;
@@ -1130,29 +1174,4 @@ esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
     p_i2c->status = I2C_STATUS_DONE;
     xSemaphoreGive(p_i2c->i2c_mux);
     return ret;
-}
-
-i2c_mode_t i2cTch_get_mode(i2c_port_t i2c_num)
-{
-    return p_i2c_obj[i2c_num]->mode;
-}
-
-esp_err_t i2cTch_set_mode(i2c_port_t i2c_num, i2c_mode_t mode)
-{
-    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
-
-    if (p_i2c_obj[i2c_num]->mode == mode) return ESP_OK;
-
-    // Flush buffer
-    if (mode == I2C_MODE_MASTER)
-    {
-        uint8_t dat;
-        while (i2cTch_slave_read_data(i2c_num, &dat, 1, 0));
-    }
-
-    I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
-    p_i2c_obj[i2c_num]->mode = mode;
-    i2c_context[i2c_num].dev->ctr.ms_mode = (mode == I2C_MODE_MASTER) ? 1 : 0;
-    I2C_EXIT_CRITICAL(&(i2c_context[i2c_num].spinlock));
-    return ESP_OK;
 }
