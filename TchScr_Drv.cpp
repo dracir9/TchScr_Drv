@@ -67,11 +67,6 @@ esp_err_t TchScr_Drv::getLastEvent(TchEvent* evnt, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
-
     return i2cTch_master_read_data(i2c_num, (uint8_t*)evnt, 5, 0x81, timeout);
 }
 
@@ -79,11 +74,6 @@ esp_err_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
 {
     static uint8_t _buff[5];
     if (!hw_init) return ESP_FAIL;
-
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE);
-    if (err != ESP_OK) {
-        return err;
-    }
 
     int len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
 
@@ -101,22 +91,12 @@ esp_err_t TchScr_Drv::setCalibration(const TchCalib* calib, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
-
     return i2cTch_master_send_data(i2c_num, (uint8_t*)calib, sizeof(TchCalib), 0x80, timeout);
 }
 
 esp_err_t TchScr_Drv::setThresholds(const uint16_t minPres, const uint16_t maxPres, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
-
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
 
     uint16_t data[2] = {minPres, maxPres};
 
@@ -127,22 +107,12 @@ esp_err_t TchScr_Drv::setButton(const Button* btn, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
-
     return i2cTch_master_send_data(i2c_num, (uint8_t*)btn, sizeof(Button), 0xA0, timeout);
 }
 
 esp_err_t TchScr_Drv::setNotifications(bool touch, bool button, bool flipXY, uint16_t freq, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
-
-    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
-    if (err != ESP_OK) {
-        return err;
-    }
 
     float reloadVal = roundf(65536.0f - 24.5e6f/(12.0f * freq));
     if (reloadVal < 0.0f)

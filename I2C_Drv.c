@@ -848,17 +848,24 @@ esp_err_t i2cTch_delete_driver(i2c_port_t i2c_num)
 
 int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, TickType_t ticks_to_wait)
 {
-    I2C_CHECK(( i2c_num < I2C_NUM_MAX ), I2C_NUM_ERROR_STR, ESP_FAIL);
+    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_FAIL);
     I2C_CHECK(p_i2c_obj[i2c_num] != NULL, I2C_DRIVER_ERR_STR, ESP_FAIL);
-    I2C_CHECK((data != NULL), I2C_ADDR_ERROR_STR, ESP_FAIL);
-    I2C_CHECK(p_i2c_obj[i2c_num]->mode == I2C_MODE_SLAVE, I2C_MODE_SLAVE_ERR_STR, ESP_FAIL);
+    I2C_CHECK(data != NULL, I2C_ADDR_ERROR_STR, ESP_FAIL);
 
     size_t size = 0;
     size_t size_rem = max_size;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
+
     if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
         return 0;
     }
+
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE);
+    if (err != ESP_OK) {
+        xSemaphoreGive(p_i2c->i2c_mux);
+        return 0;
+    }
+
     portTickType ticks_rem = ticks_to_wait;
     portTickType ticks_end = xTaskGetTickCount() + ticks_to_wait;
     I2C_ENTER_CRITICAL(&(i2c_context[i2c_num].spinlock));
@@ -884,18 +891,23 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
 
 esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t len, uint8_t address, TickType_t ticks_to_wait)
 {
-    I2C_CHECK(( i2c_num < I2C_NUM_MAX ), I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
+    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
     I2C_CHECK(p_i2c_obj[i2c_num] != NULL, I2C_DRIVER_NOT_INSTALL_ERR_STR, ESP_ERR_INVALID_STATE);
-    I2C_CHECK(p_i2c_obj[i2c_num]->mode == I2C_MODE_MASTER, I2C_MASTER_MODE_ERR_STR, ESP_ERR_INVALID_STATE);
     I2C_CHECK(len <= 32, "A maximum of 32 bytes can be sent at a time", ESP_ERR_INVALID_ARG);
 
     // Sometimes when the FSM get stuck, the ACK_ERR interrupt will occur endlessly until we reset the FSM and clear bus.
     esp_err_t ret = ESP_FAIL;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
-    BaseType_t res = xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait);
-    if (res == pdFALSE) {
+
+    if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
         return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    if (err != ESP_OK) {
+        xSemaphoreGive(p_i2c->i2c_mux);
+        return err;
     }
 
     i2c_hw_cmd_t data_cmd = {
@@ -988,18 +1000,23 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
 
 esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t len, uint8_t address, TickType_t ticks_to_wait)
 {
-    I2C_CHECK(( i2c_num < I2C_NUM_MAX ), I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
+    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
     I2C_CHECK(p_i2c_obj[i2c_num] != NULL, I2C_DRIVER_NOT_INSTALL_ERR_STR, ESP_ERR_INVALID_STATE);
-    I2C_CHECK(p_i2c_obj[i2c_num]->mode == I2C_MODE_MASTER, I2C_MASTER_MODE_ERR_STR, ESP_ERR_INVALID_STATE);
     I2C_CHECK(len <= 32, "A maximum of 32 bytes can be sent at a time", ESP_ERR_INVALID_ARG);
 
     // Sometimes when the FSM get stuck, the ACK_ERR interrupt will occur endlessly until we reset the FSM and clear bus.
     esp_err_t ret = ESP_FAIL;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
-    BaseType_t res = xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait);
-    if (res == pdFALSE) {
+
+    if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
         return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_MASTER);
+    if (err != ESP_OK) {
+        xSemaphoreGive(p_i2c->i2c_mux);
+        return err;
     }
 
     xQueueReset(p_i2c->cmd_evt_queue);
