@@ -166,9 +166,8 @@ typedef struct {
 
     QueueHandle_t cmd_evt_queue;     /*!< I2C command event queue */
 
-    xSemaphoreHandle cmd_mux;        /*!< semaphore to lock command process */
+    xSemaphoreHandle i2c_mux;        /*!< semaphore to lock command process */
 
-    xSemaphoreHandle slv_rx_mux;     /*!< slave rx buffer mux */
     size_t rx_buf_length;            /*!< rx buffer length */
     RingbufHandle_t rx_ring_buf;     /*!< rx ringbuffer handler of slave mode */
 } i2c_obj_t;
@@ -771,18 +770,14 @@ esp_err_t i2cTch_install_driver(i2c_port_t i2c_num, i2c_mode_t mode, size_t slv_
             p_i2c->rx_ring_buf = NULL;
             p_i2c->rx_buf_length = 0;
         }
-        p_i2c->slv_rx_mux = xSemaphoreCreateMutex();
-        if (p_i2c->slv_rx_mux == NULL) {
-            ESP_LOGE(I2C_TAG, I2C_SEM_ERR_STR);
-            goto err;
-        }
+
         // Master specific
         //semaphore to sync sending process, because we only have 32 bytes for hardware fifo.
-        p_i2c->cmd_mux = xSemaphoreCreateMutex();
+        p_i2c->i2c_mux = xSemaphoreCreateMutex();
 
         p_i2c->cmd_evt_queue = xQueueCreate(I2C_EVT_QUEUE_LEN, sizeof(i2c_cmd_evt_t));
 
-        if (p_i2c->cmd_mux == NULL || p_i2c->cmd_evt_queue == NULL) {
+        if (p_i2c->i2c_mux == NULL || p_i2c->cmd_evt_queue == NULL) {
             ESP_LOGE(I2C_TAG, I2C_SEM_ERR_STR);
             goto err;
         }
@@ -810,11 +805,8 @@ err:
             vQueueDelete(p_i2c_obj[i2c_num]->cmd_evt_queue);
             p_i2c_obj[i2c_num]->cmd_evt_queue = NULL;
         }
-        if (p_i2c_obj[i2c_num]->cmd_mux) {
-            vSemaphoreDelete(p_i2c_obj[i2c_num]->cmd_mux);
-        }
-        if (p_i2c_obj[i2c_num]->slv_rx_mux) {
-            vSemaphoreDelete(p_i2c_obj[i2c_num]->slv_rx_mux);
+        if (p_i2c_obj[i2c_num]->i2c_mux) {
+            vSemaphoreDelete(p_i2c_obj[i2c_num]->i2c_mux);
         }
     }
     free(p_i2c_obj[i2c_num]);
@@ -832,16 +824,13 @@ esp_err_t i2cTch_delete_driver(i2c_port_t i2c_num)
     esp_intr_free(p_i2c->intr_handle);
     p_i2c->intr_handle = NULL;
 
-    if (p_i2c->cmd_mux) {
-        xSemaphoreTake(p_i2c->cmd_mux, portMAX_DELAY);
-        vSemaphoreDelete(p_i2c->cmd_mux);
+    if (p_i2c->i2c_mux) {
+        xSemaphoreTake(p_i2c->i2c_mux, portMAX_DELAY);
+        vSemaphoreDelete(p_i2c->i2c_mux);
     }
     if (p_i2c_obj[i2c_num]->cmd_evt_queue) {
         vQueueDelete(p_i2c_obj[i2c_num]->cmd_evt_queue);
         p_i2c_obj[i2c_num]->cmd_evt_queue = NULL;
-    }
-    if (p_i2c->slv_rx_mux) {
-        vSemaphoreDelete(p_i2c->slv_rx_mux);
     }
 
     if (p_i2c->rx_ring_buf) {
@@ -867,7 +856,7 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
     size_t size = 0;
     size_t size_rem = max_size;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
-    if (xSemaphoreTake(p_i2c->slv_rx_mux, ticks_to_wait) == pdFALSE) {
+    if (xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait) == pdFALSE) {
         return 0;
     }
     portTickType ticks_rem = ticks_to_wait;
@@ -889,7 +878,7 @@ int i2cTch_slave_read_data(i2c_port_t i2c_num, uint8_t *data, size_t max_size, T
         }
     }
 
-    xSemaphoreGive(p_i2c->slv_rx_mux);
+    xSemaphoreGive(p_i2c->i2c_mux);
     return max_size - size_rem;
 }
 
@@ -904,7 +893,7 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
     esp_err_t ret = ESP_FAIL;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
-    BaseType_t res = xSemaphoreTake(p_i2c->cmd_mux, ticks_to_wait);
+    BaseType_t res = xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait);
     if (res == pdFALSE) {
         return ESP_ERR_TIMEOUT;
     }
@@ -993,7 +982,7 @@ esp_err_t i2cTch_master_send_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
         }
     } while (p_i2c->status == I2C_STATUS_ACK_ERROR && ackRetry < 20);
     p_i2c->status = I2C_STATUS_DONE;
-    xSemaphoreGive(p_i2c->cmd_mux);
+    xSemaphoreGive(p_i2c->i2c_mux);
     return ret;
 }
 
@@ -1008,7 +997,7 @@ esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
     esp_err_t ret = ESP_FAIL;
     i2c_obj_t *p_i2c = p_i2c_obj[i2c_num];
     TickType_t ticks_start = xTaskGetTickCount();
-    BaseType_t res = xSemaphoreTake(p_i2c->cmd_mux, ticks_to_wait);
+    BaseType_t res = xSemaphoreTake(p_i2c->i2c_mux, ticks_to_wait);
     if (res == pdFALSE) {
         return ESP_ERR_TIMEOUT;
     }
@@ -1122,7 +1111,7 @@ esp_err_t i2cTch_master_read_data(i2c_port_t i2c_num, uint8_t* data, uint16_t le
         }
     }
     p_i2c->status = I2C_STATUS_DONE;
-    xSemaphoreGive(p_i2c->cmd_mux);
+    xSemaphoreGive(p_i2c->i2c_mux);
     return ret;
 }
 
