@@ -81,7 +81,7 @@ public:
 
     esp_err_t begin(i2c_mode_t mode, gpio_num_t sda, gpio_num_t scl, uint16_t addr, uint32_t freq = 255000);
     esp_err_t getLastEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
-    uint32_t getEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
+    esp_err_t getEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setCalibration(const TchCalib* calib, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setThresholds(const uint16_t minPres, const uint16_t maxPres, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setButton(const Button* btn, TickType_t timeout = pdMS_TO_TICKS(1000));

@@ -75,23 +75,26 @@ esp_err_t TchScr_Drv::getLastEvent(TchEvent* evnt, TickType_t timeout)
     return i2cTch_master_read_data(i2c_num, (uint8_t*)evnt, 5, 0x81, timeout);
 }
 
-uint32_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
+esp_err_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
 {
     static uint8_t _buff[5];
     if (!hw_init) return ESP_FAIL;
 
     esp_err_t err = i2cTch_set_mode(i2c_num, I2C_MODE_SLAVE);
     if (err != ESP_OK) {
-        return 0;
+        return err;
     }
 
-    uint32_t len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
+    int len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
+
+    if (len != 5)
+        return ESP_ERR_INVALID_RESPONSE;
 
     evnt->id = _buff[0] & 0x1F;
     evnt->trigger = (TrgSrc)(_buff[0] >> 5);
     evnt->pos.x = ((int16_t*)&_buff[1])[0];
     evnt->pos.y = ((int16_t*)&_buff[1])[1];
-    return len;
+    return ESP_OK;
 }
 
 esp_err_t TchScr_Drv::setCalibration(const TchCalib* calib, TickType_t timeout)
