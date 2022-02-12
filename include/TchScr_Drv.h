@@ -52,15 +52,16 @@ enum TrgSrc : uint8_t
 
 struct Button
 {
-    uint8_t id;
+    Button() : enPressEv {false}, enHoldEv {false}, enReleaseEv {false} {}
+    uint8_t id = 0;
     bool    enPressEv:1;
     bool    enHoldEv:1;
     bool    enReleaseEv:1;
     uint8_t holdTime:5;
-	int16_t xmin;
-	int16_t xmax;
-	int16_t ymin;
-	int16_t ymax;
+	int16_t xmin = 0;
+	int16_t xmax = 0;
+	int16_t ymin = 0;
+	int16_t ymax = 0;
 };
 
 struct TchEvent
