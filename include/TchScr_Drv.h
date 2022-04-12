@@ -46,18 +46,20 @@ enum TrgSrc : uint8_t
     IDLE,
     PRESS,
     HOLD_STRT,
+    HOLD_TICK,
     HOLD_END,
     RELEASE
 };
 
 struct Button
 {
-    Button() : enPressEv {false}, enHoldEv {false}, enReleaseEv {false} {}
+    Button() : enPressEv {false}, enHoldEv {false}, enHoldTickEv {false}, enReleaseEv {false} {}
     uint8_t id = 0;
     bool    enPressEv:1;
     bool    enHoldEv:1;
+    bool    enHoldTickEv:1;
     bool    enReleaseEv:1;
-    uint8_t holdTime:5;
+    int8_t holdTime = 0;
 	int16_t xmin = 0;
 	int16_t xmax = 0;
 	int16_t ymin = 0;
