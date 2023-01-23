@@ -7,8 +7,6 @@
  * 
  * @copyright Copyright (c) 2021 Ricard Bitriá Ribes
  * 
- * Based on original ESP-IDF I2C driver.
- * Copyright 2015-2016 Espressif Systems (Shanghai) PTE LTD
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,37 +25,34 @@
 #include "TchScr_Drv.h"
 #include "esp_log.h"
 
-TchScr_Drv::TchScr_Drv(i2c_port_t i2c_num) :
-    i2c_num (i2c_num)
+TchScr_Drv::TchScr_Drv(uart_port_t uart_num) :
+    uart_num (uart_num)
 {
 }
 
 TchScr_Drv::~TchScr_Drv()
 {
-    i2cTch_delete_driver(i2c_num);
+    uart_driver_delete(uart_num);
 }
 
-esp_err_t TchScr_Drv::begin(i2c_mode_t mode, gpio_num_t sda, gpio_num_t scl, uint16_t addr, uint32_t freq)
+esp_err_t TchScr_Drv::begin(gpio_num_t tx, gpio_num_t rx, int buf_size, int queu_size, uint32_t freq)
 {
-    i2c_full_config_t conf;
-    conf.mode = mode;
-    conf.sda_io_num = sda;         // select GPIO specific to your project
-    conf.sda_pullup_en = GPIO_PULLUP_DISABLE;
-    conf.scl_io_num = scl;         // select GPIO specific to your project
-    conf.scl_pullup_en = GPIO_PULLUP_DISABLE;
-    conf.slave.addr_10bit_en = false;
-    conf.slave.slave_addr = addr;
-    conf.master.clk_speed = freq;
+    // Configure uart initialization structure
+    uart_config_t uart_config = {
+        .baud_rate = (int)freq,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_APB,
+    };
 
-    esp_err_t err = i2cTch_init_params(i2c_num, &conf);
-    if (err != ESP_OK) {
-        return err;
-    }
-    
-    err = i2cTch_install_driver(i2c_num, mode, 128);
-    if (err != ESP_OK) {
-        return err;
-    }
+    //Install UART driver, and get the queue.
+    uart_driver_install(uart_num, buf_size, buf_size, queu_size, &uart_queue, 0);
+    uart_param_config(uart_num, &uart_config);
+
+    //Set UART pins
+    uart_set_pin(uart_num, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     hw_init = true;
     return ESP_OK;
@@ -67,23 +62,67 @@ esp_err_t TchScr_Drv::getLastEvent(TchEvent* evnt, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    return i2cTch_master_read_data(i2c_num, (uint8_t*)evnt, 5, 0x81, timeout);
+    // Send read command
+    const char cmd[] = {0x80};
+    if (uart_write_bytes(uart_num, cmd, 1) < 0)
+        return ESP_FAIL;
+
+    // Wait for data received
+    uart_event_t event;
+    TickType_t ticks_start = xTaskGetTickCount();
+    TickType_t wait_time = 0;
+    do {
+        xQueueReceive(uart_queue, (void *)&event, timeout - wait_time);
+        wait_time = xTaskGetTickCount() - ticks_start;
+    } while (wait_time < timeout && event.type != UART_DATA);
+    
+    if (wait_time >= timeout)
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+    else
+    {
+        if (event.size != 5) return ESP_ERR_INVALID_RESPONSE;
+        uart_read_bytes(uart_num, (uint8_t*)evnt, 5, portMAX_DELAY);
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t TchScr_Drv::getEvent(TchEvent* evnt, TickType_t timeout)
 {
-    static uint8_t _buff[5];
+    uint8_t _buff[6] = {0};
     if (!hw_init) return ESP_FAIL;
 
-    int len =  i2cTch_slave_read_data(i2c_num, _buff, 5, timeout);
+    // Check if there is data avaiilable
+    int bytesRead = uart_read_bytes(uart_num, _buff, sizeof(_buff), portMAX_DELAY);
 
-    if (len != 5)
-        return ESP_ERR_INVALID_RESPONSE;
+    if (bytesRead < sizeof(_buff))
+    {
+        // Wait to receive data
+        uart_event_t event;
+        TickType_t ticks_start = xTaskGetTickCount();
+        TickType_t wait_time = 0;
+        do {
+            xQueueReceive(uart_queue, (void *)&event, timeout - wait_time);
+            wait_time = xTaskGetTickCount() - ticks_start;
 
-    evnt->id = _buff[0] & 0x1F;
-    evnt->trigger = (TrgSrc)(_buff[0] >> 5);
-    evnt->pos.x = ((int16_t*)&_buff[1])[0];
-    evnt->pos.y = ((int16_t*)&_buff[1])[1];
+            if (event.type == UART_DATA)
+                bytesRead += uart_read_bytes(uart_num, &_buff[bytesRead], sizeof(_buff) - bytesRead, portMAX_DELAY);
+            
+        } while (wait_time < timeout && bytesRead < sizeof(_buff));
+        
+        if (wait_time >= timeout)
+            return ESP_ERR_TIMEOUT;
+    }
+
+    if (_buff[0] != 5) return ESP_ERR_INVALID_RESPONSE;
+
+    evnt->id = _buff[1] & 0x1F;
+    evnt->trigger = (TrgSrc)(_buff[1] >> 5);
+    evnt->pos.x = ((int16_t*)&_buff[2])[0];
+    evnt->pos.y = ((int16_t*)&_buff[2])[1];
+
     return ESP_OK;
 }
 
@@ -91,23 +130,70 @@ esp_err_t TchScr_Drv::setCalibration(const TchCalib* calib, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    return i2cTch_master_send_data(i2c_num, (uint8_t*)calib, sizeof(TchCalib), 0x80, timeout);
+    const char data[sizeof(TchCalib) + 1] = {
+        0x01,
+        ((uint8_t*)calib)[0],
+        ((uint8_t*)calib)[1],
+        ((uint8_t*)calib)[2],
+        ((uint8_t*)calib)[3],
+        ((uint8_t*)calib)[4],
+        ((uint8_t*)calib)[5],
+        ((uint8_t*)calib)[6],
+        ((uint8_t*)calib)[7],
+        ((uint8_t*)calib)[8],
+        ((uint8_t*)calib)[9],
+        ((uint8_t*)calib)[10],
+        ((uint8_t*)calib)[11]
+        };
+
+    if (uart_write_bytes(uart_num, data, sizeof(data)) >= 0) 
+        return ESP_OK;
+    else
+        return ESP_FAIL;
 }
 
 esp_err_t TchScr_Drv::setThresholds(const uint16_t minPres, const uint16_t maxPres, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    uint16_t data[2] = {minPres, maxPres};
+    const char data[] = {
+        0x02,
+        ((uint8_t*)&minPres)[0],
+        ((uint8_t*)&minPres)[1],
+        ((uint8_t*)&maxPres)[0],
+        ((uint8_t*)&maxPres)[1]
+        };
 
-    return i2cTch_master_send_data(i2c_num, (uint8_t*)data, 4, 0x90, timeout);
+    if (uart_write_bytes(uart_num, data, sizeof(data)) >= 0) 
+        return ESP_OK;
+    else
+        return ESP_FAIL;
 }
 
 esp_err_t TchScr_Drv::setButton(const Button* btn, TickType_t timeout)
 {
     if (!hw_init) return ESP_FAIL;
 
-    return i2cTch_master_send_data(i2c_num, (uint8_t*)btn, sizeof(Button), 0xA0, timeout);
+    const char data[sizeof(Button) + 1] = {
+        0x03,
+        ((uint8_t*)btn)[0],
+        ((uint8_t*)btn)[1],
+        ((uint8_t*)btn)[2],
+        ((uint8_t*)btn)[3],
+        ((uint8_t*)btn)[4],
+        ((uint8_t*)btn)[5],
+        ((uint8_t*)btn)[6],
+        ((uint8_t*)btn)[7],
+        ((uint8_t*)btn)[8],
+        ((uint8_t*)btn)[9],
+        ((uint8_t*)btn)[10],
+        ((uint8_t*)btn)[11]
+    };
+
+    if (uart_write_bytes(uart_num, data, sizeof(data)) >= 0) 
+        return ESP_OK;
+    else
+        return ESP_FAIL;
 }
 
 esp_err_t TchScr_Drv::setNotifications(bool touch, bool button, bool flipXY, uint16_t freq, TickType_t timeout)
@@ -119,7 +205,10 @@ esp_err_t TchScr_Drv::setNotifications(bool touch, bool button, bool flipXY, uin
         freq = 0;
     else
         freq = reloadVal;
-    uint8_t data[3] = {(uint8_t)(touch | (button << 1) | (flipXY << 2)), ((uint8_t*)&freq)[0], ((uint8_t*)&freq)[1]};
+    uint8_t data[4] = {0x04, (uint8_t)(touch | (button << 1) | (flipXY << 2)), ((uint8_t*)&freq)[0], ((uint8_t*)&freq)[1]};
 
-    return i2cTch_master_send_data(i2c_num, data, 3, 0xB0, timeout);
+    if (uart_write_bytes(uart_num, data, sizeof(data)) >= 0) 
+        return ESP_OK;
+    else
+        return ESP_FAIL;
 }

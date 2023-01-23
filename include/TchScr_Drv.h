@@ -27,7 +27,8 @@
 #ifndef TCHSCR_DRV_H
 #define TCHSCR_DRV_H
 
-#include "I2C_Drv.h"
+#include <driver/uart.h>
+#include <driver/gpio.h>
 #include "Vector.h"
 
 struct TchCalib
@@ -77,12 +78,14 @@ class TchScr_Drv
 {
 private:
     bool hw_init;
-    i2c_port_t i2c_num;
+    uart_port_t uart_num;
+    QueueHandle_t uart_queue;
+
 public:
-    TchScr_Drv(i2c_port_t i2c_num);
+    TchScr_Drv(uart_port_t uart_num);
     ~TchScr_Drv();
 
-    esp_err_t begin(i2c_mode_t mode, gpio_num_t sda, gpio_num_t scl, uint16_t addr, uint32_t freq = 255000);
+    esp_err_t begin(gpio_num_t tx, gpio_num_t rx, int buf_size=512, int queu_size=32, uint32_t freq=250000);
     esp_err_t getLastEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t getEvent(TchEvent* evnt, TickType_t timeout = pdMS_TO_TICKS(1000));
     esp_err_t setCalibration(const TchCalib* calib, TickType_t timeout = pdMS_TO_TICKS(1000));
