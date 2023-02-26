@@ -38,7 +38,7 @@ TchScr_Drv::~TchScr_Drv()
 esp_err_t TchScr_Drv::begin(gpio_num_t tx, gpio_num_t rx, int buf_size, int queu_size, uint32_t freq)
 {
     // Configure uart initialization structure
-    uart_config_t uart_config;
+    uart_config_t uart_config = {};
         uart_config.baud_rate = (int)freq;
         uart_config.data_bits = UART_DATA_8_BITS;
         uart_config.parity = UART_PARITY_DISABLE;
